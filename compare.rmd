@@ -1,0 +1,102 @@
+---
+title: "Arc Drawing Demo"
+output: html_notebook
+---
+
+**R function to compute arc trajectories for Origin Destination (OD) data.** This notebook demonstrates how to render ODs stored in .csv as compound visualisation consisting of arcs and straight lines on an interactive leaflet map. For futher information on licensing, please refer to [Terms of Use](#terms) below.
+
+# Preamble
+```{r}
+library(sp)
+library(geosphere)
+library(leaflet)
+
+source("./arc.R")
+```
+
+# Additional Convinence Functions
+```{r}
+dist.haversine <- function(lng.1,lat.1,lng.2,lat.2){
+  return(distHaversine(c(lng.1,lat.1), c(lng.2,lat.2)))
+}
+```
+
+# Load OD Data
+```{r}
+undirected <- read.csv("./undirected.csv", sep=",", header=TRUE)
+```
+
+# ETL
+Partition dataset by distance. Longer ODs will be converted to arc trajectories and shorter ones will remain as lines. All ODs will be stored in a *SpatialLinesDataFrame*.
+```{r}
+undirected.Long  <- subset(undirected, undirected$distance > 15)
+undirected.Short <- subset(undirected, undirected$distance <= 15)
+
+linelist <- list()
+
+n <- 0
+for(OD in undirected.Long$label){
+  df <- subset(undirected.Long, undirected.Long$label==OD)
+  p1 <- c(df$origin.x,df$origin.y)
+  p2 <- c(df$destination.x,df$destination.y)
+  if(!is.na(p1) && !is.na(p2)){
+    p3 <- as.vector(mid.point(p1,p2))
+    curve.arc <- arc(p3, distHaversine(p3,p1), bearingRhumb(p3, p1), bearingRhumb(p3, p2), 16)
+    if(nrow(curve.arc) >= 2){
+      coordinates(curve.arc) <- ~lon + lat
+      linelist[[length(linelist) + 1]] <- Lines(Line(curve.arc),df$Id)
+      n <- n+1
+    }
+  }
+}
+
+for(OD in undirected.Short$label){
+  df <- subset(undirected.Short, undirected.Short$label==OD)
+  p1 <- c(df$origin.x,df$destination.x)
+  p2 <- c(df$origin.y,df$destination.y)
+  line <- as.data.frame(cbind(p1,p2))
+  names(line) <- c("x","y")
+  if(!is.na(p1) && !is.na(p2)){
+    coordinates(line) <- ~x + y
+    linelist[[length(linelist) + 1]] <- Lines(Line(line),df$Id)
+    n <- n+1
+  }
+}
+
+linelist <- SpatialLines(linelist)
+lines.df <- SpatialLinesDataFrame(sl=linelist, data=undirected, match.ID=TRUE)
+
+rm(line)
+rm(linelist)
+rm(df)
+rm(OD)
+rm(n)
+
+```
+
+# Visualise ODs on an interactive map
+## Set map centre
+```{r}
+p1 <- c(103.8, 1.378)
+p2 <- c(103.7, 1.348)
+p3 <- as.vector(midPoint(p1,p2))
+```
+
+## Append and render the *SpatialLinesDataFrames*
+```{r}
+m = leaflet(lines.df) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%
+    setView(p3[1],p3[2],zoom=12) %>%
+    addPolylines(color="#FF0000", 
+                 weight=lines.df$frequency/20, 
+                 opacity=0.25, 
+                 popup=paste(lines.df$label, lines.df$frequency, sep=", "))
+m
+```
+
+## Terms of Use {#terms}
+You are free to copy, distribute, adapt, display or include this code in other products for commercial and noncommercial purposes at no cost subject to certain limitations summarized below.
+
+1. You must include attribution for the code you use.
+
+2. This example uses fictious frequency data for illustrative purposes. I makes no warranties with respect to the data and you agree that I shall not be liable to you in connection with your use of the data. You are solely responsible for the content You provide. I have the right, but not the duty, to pre-screen, refuse, edit, move or remove any content that violates these Terms of Use or that is unlawful.
